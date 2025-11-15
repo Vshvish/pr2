@@ -4,7 +4,6 @@ import sys
 import requests
 import json
 from urllib.parse import urljoin
-from collections import deque
 
 class DependencyFetcher:
     def __init__(self, base_url):
@@ -14,19 +13,17 @@ class DependencyFetcher:
     def get_package_dependencies(self, package_name, version):
         """Получает прямые зависимости пакета"""
         try:
-            #Тестовоый режим - имитируем данные
-            if hasattr(self, 'test_data'):
-                return self._get_test_dependencies(package_name, version)
-            
-            # Реальный NuGet API
+            # Получаем информацию о пакете
             package_url = f"{self.base_url}{package_name.lower()}/index.json"
             response = self.session.get(package_url)
             response.raise_for_status()
             
             package_data = response.json()
             
+            # Ищем нужную версию
             for version_entry in package_data.get('versions', []):
                 if version_entry['version'] == version:
+                    # Получаем детали версии
                     version_url = version_entry['@id']
                     version_response = self.session.get(version_url)
                     version_response.raise_for_status()
@@ -44,6 +41,8 @@ class DependencyFetcher:
     def _extract_dependencies(self, version_data):
         """Извлекает зависимости из данных версии"""
         dependencies = []
+        
+        # Ищем зависимости в catalogEntry
         catalog_entry = version_data.get('catalogEntry', {})
         dependency_groups = catalog_entry.get('dependencyGroups', [])
         
@@ -55,84 +54,6 @@ class DependencyFetcher:
                 })
         
         return dependencies
-    
-    def set_test_data(self, test_data):
-        """Устанавливает тестовые данные для режима тестирования"""
-        self.test_data = test_data
-    
-    def _get_test_dependencies(self, package_name, version):
-        """Получает зависимости из тестовых данных"""
-        package_key = f"{package_name}_{version}"
-        return self.test_data.get(package_key, [])
-
-class DependencyGraph:
-    def __init__(self, fetcher, max_depth, filter_substring):
-        self.fetcher = fetcher
-        self.max_depth = max_depth
-        self.filter_substring = filter_substring
-        self.graph = {}
-        self.visited = set()
-    
-    def build_graph(self, root_package, root_version):
-        """Строит граф зависимостей с помощью BFS"""
-        queue = deque()
-        queue.append((root_package, root_version, 0))
-        self.visited.add(f"{root_package}_{root_version}")
-        
-        while queue:
-            current_package, current_version, depth = queue.popleft()
-            
-            # Проверяем максимальную глубину
-            if depth >= self.max_depth:
-                continue
-            
-            # Получаем зависимости текущего пакета
-            try:
-                dependencies = self.fetcher.get_package_dependencies(current_package, current_version)
-                
-                # Фильтруем зависимости
-                filtered_deps = []
-                for dep in dependencies:
-                    if self.filter_substring and self.filter_substring in dep['id']:
-                        continue  # Пропускаем пакеты с фильтруемой подстрокой
-                    filtered_deps.append(dep)
-                
-                # Добавляем в граф
-                current_key = f"{current_package}_{current_version}"
-                self.graph[current_key] = filtered_deps
-                
-                # Добавляем зависимости в очередь для дальнейшего обхода
-                for dep in filtered_deps:
-                    dep_key = f"{dep['id']}_{self._extract_version(dep['version_range'])}"
-                    
-                    # Проверяем циклические зависимости
-                    if dep_key not in self.visited:
-                        self.visited.add(dep_key)
-                        queue.append((dep['id'], self._extract_version(dep['version_range']), depth + 1))
-                    else:
-                        print(f"Обнаружена циклическая зависимость: {dep_key}")
-                        
-            except Exception as e:
-                print(f"Ошибка при получении зависимостей для {current_package}: {e}")
-    
-   def _extract_version(self, version_range):
-    """Извлекает версию из диапазона (упрощенная версия)"""
-    if not version_range or version_range == "(, )":
-        return "1.0"  # Версия по умолчанию без .0
-    import re
-    match = re.search(r'(\d+\.\d+)', version_range)  # Ищем только X.Y
-    return match.group(1) if match else "1.0"
-    
-    def get_graph(self):
-        return self.graph
-    
-    def print_graph(self):
-        """Выводит граф в читаемом формате"""
-        print("\nГраф зависимостей:")
-        for package, dependencies in self.graph.items():
-            print(f"{package}:")
-            for dep in dependencies:
-                print(f"  └── {dep['id']} {dep['version_range']}")
 
 class Config:
     def __init__(self):
@@ -141,6 +62,7 @@ class Config:
         self.args = None
     
     def _setup_arguments(self):
+        # Параметры из этапа 1
         self.parser.add_argument('--package', required=True, help='Имя анализируемого пакета')
         self.parser.add_argument('--source', required=True, help='URL репозитория или путь к файлу')
         self.parser.add_argument('--test-mode', action='store_true', help='Режим тестового репозитория')
@@ -164,29 +86,6 @@ class Config:
         if not self.args.version:
             raise ValueError("Версия пакета не может быть пустой")
 
-def load_test_data(file_path):
-    """Загружает тестовые данные из файла"""
-    test_data = {}
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and '->' in line:
-                    parts = line.split('->')
-                    package_info = parts[0].strip()
-                    dependencies = []
-                    
-                    if len(parts) > 1:
-                        for dep in parts[1].split(','):
-                            dep = dep.strip()
-                            if dep:
-                                dependencies.append({'id': dep, 'version_range': '1.0.0'})
-                    
-                    test_data[package_info] = dependencies
-        return test_data
-    except Exception as e:
-        raise Exception(f"Ошибка загрузки тестового файла: {e}")
-
 def main():
     config = Config()
     args = config.parse_args()
@@ -198,46 +97,27 @@ def main():
     
     print("\n" + "="*50)
     
-    # Настройка зависимости от режима
-    if args.test_mode:
-        # Режим тестирования - используем файл
-        print("Режим тестирования активирован")
+    # Этап 2: Получение зависимостей
+    if not args.test_mode:
         try:
-            test_data = load_test_data(args.source)
-            fetcher = DependencyFetcher("")
-            fetcher.set_test_data(test_data)
+            print(f"Получение зависимостей для {args.package} версии {args.version}...")
+            
+            # Используем официальный NuGet репозиторий
+            fetcher = DependencyFetcher("https://api.nuget.org/v3/registration5-gz-semver2/")
+            dependencies = fetcher.get_package_dependencies(args.package, args.version)
+            
+            # Вывод прямых зависимостей (требование этапа 2)
+            print(f"\nПрямые зависимости пакета {args.package} {args.version}:")
+            if dependencies:
+                for dep in dependencies:
+                    print(f"  - {dep['id']} {dep['version_range']}")
+            else:
+                print("  Зависимости не найдены")
+                
         except Exception as e:
-            print(f"Ошибка: {e}")
-            return
+            print(f"Ошибка при получении зависимостей: {e}")
     else:
-        # Режим реального репозитория
-        fetcher = DependencyFetcher("https://api.nuget.org/v3/registration5-gz-semver2/")
-    
-    # Этап 2: Получение прямых зависимостей
-    try:
-        print(f"Получение зависимостей для {args.package} версии {args.version}...")
-        dependencies = fetcher.get_package_dependencies(args.package, args.version)
-        
-        print(f"\nПрямые зависимости пакета {args.package} {args.version}:")
-        if dependencies:
-            for dep in dependencies:
-                print(f"  - {dep['id']} {dep['version_range']}")
-        else:
-            print("  Зависимости не найдены")
-    except Exception as e:
-        print(f"Ошибка при получении зависимостей: {e}")
-        return
-    
-    print("\n" + "="*50)
-    
-    # Этап 3: Построение полного графа BFS
-    print("Построение полного графа зависимостей...")
-    
-    graph_builder = DependencyGraph(fetcher, args.max_depth, args.filter)
-    graph_builder.build_graph(args.package, args.version)
-    
-    # Вывод результата
-    graph_builder.print_graph()
+        print("Режим тестирования - пропуск получения зависимостей")
 
 if __name__ == "__main__":
     main()
