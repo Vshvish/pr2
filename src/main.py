@@ -115,13 +115,13 @@ class DependencyGraph:
             except Exception as e:
                 print(f"Ошибка при получении зависимостей для {current_package}: {e}")
     
-    def _extract_version(self, version_range):
-        """Извлекает версию из диапазона (упрощенная версия)"""
-        if not version_range or version_range == "(, )":
-            return "1.0.0"  # Версия по умолчанию
-        import re
-        match = re.search(r'(\d+\.\d+\.\d+)', version_range)
-        return match.group(1) if match else "1.0.0"
+   def _extract_version(self, version_range):
+    """Извлекает версию из диапазона (упрощенная версия)"""
+    if not version_range or version_range == "(, )":
+        return "1.0"  # Версия по умолчанию без .0
+    import re
+    match = re.search(r'(\d+\.\d+)', version_range)  # Ищем только X.Y
+    return match.group(1) if match else "1.0"
     
     def get_graph(self):
         return self.graph
